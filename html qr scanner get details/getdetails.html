@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>QR Inspector — Upload & Parse Phone / UPI / vCard / WiFi / SMS</title>
+<style>
+  :root{--bg:#f6f8fb;--card:#fff;--accent:#5c6ac4;--muted:#667;--good:#28a745;--bad:#dc3545}
+  *{box-sizing:border-box}
+  body{
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+    background: linear-gradient(135deg,#eef2ff 0%, #f6fbff 100%);
+    margin:0;padding:28px;display:flex;align-items:flex-start;justify-content:center;
+  }
+  .wrap{width:100%;max-width:980px;background:var(--card);border-radius:14px;padding:22px;box-shadow:0 10px 30px rgba(30,30,50,0.06)}
+  h1{margin:0 0 14px;font-size:20px;color:#222}
+  p.lead{margin:0 0 18px;color:var(--muted)}
+  .controls{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+  .btn{background:linear-gradient(180deg,var(--accent),#4441a8);color:#fff;border:0;padding:10px 14px;border-radius:10px;cursor:pointer;font-weight:600}
+  .file{position:relative;overflow:hidden;border-radius:10px}
+  .file input[type=file]{position:absolute;left:0;top:0;opacity:0;width:100%;height:100%;cursor:pointer}
+  #status{margin:8px 0;color:var(--muted);font-size:14px}
+  .grid{display:grid;grid-template-columns:360px 1fr;gap:16px}
+  .panel{background:#fbfdff;border-radius:10px;padding:12px;border:1px solid rgba(20,30,80,0.04)}
+  video{width:100%;height:220px;border-radius:10px;background:#000;object-fit:cover;border:1px solid rgba(0,0,0,0.06)}
+  canvas{display:none}
+  .result{margin-top:8px}
+  .field{display:flex;align-items:flex-start;gap:12px;padding:10px;border-radius:8px;margin-bottom:10px;background:#fff;border-left:4px solid #e9eefc;box-shadow:0 4px 12px rgba(30,30,50,0.03)}
+  .label{font-weight:700;color:#222;font-size:13px;min-width:160px}
+  .value{font-family: "Courier New", monospace;white-space:pre-wrap;word-break:break-word;color:#333;font-size:13px;flex:1}
+  .copy{background:#eef6ff;border:0;padding:6px 8px;border-radius:8px;cursor:pointer}
+  .badge{display:inline-block;padding:6px 8px;border-radius:999px;background:#f1f7ff;color:#1b3aa6;font-weight:700;font-size:12px}
+  .raw{background:#0f1724;color:#dbeafe;padding:10px;border-radius:8px;font-family:monospace;max-height:160px;overflow:auto}
+  .note{font-size:13px;color:var(--muted);margin-top:8px}
+  .small{font-size:12px;color:#666}
+</style>
+</head>
+<body>
+  <div class="wrap" role="main">
+    <h1>QR Inspector</h1>
+    <p class="lead">Upload a QR image (or use camera) and the inspector will extract phone numbers, UPI IDs, vCard / contact fields, Wi-Fi settings, SMS, geo links and more.</p>
+
+    <div class="controls">
+      <button id="startCamera" class="btn">Start Camera</button>
+      <button id="stopCamera" class="btn" style="background:#aaa" disabled>Stop Camera</button>
+
+      <label class="file btn" title="Upload image">
+        Upload Image
+        <input id="fileInput" type="file" accept="image/*">
+      </label>
+
+      <div id="status" aria-live="polite"></div>
+    </div>
+
+    <div class="grid">
+      <div class="panel">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="canvas"></canvas>
+        <div class="note small">Tip: For uploads use a clean well-lit photo. If camera isn't allowed, use Upload.</div>
+      </div>
+
+      <div class="panel" id="outputPanel">
+        <div id="summary" class="small">No QR scanned yet.</div>
+        <div class="result" id="results"></div>
+
+        <div style="margin-top:12px">
+          <div class="label" style="display:inline-block;margin-bottom:8px">Raw data</div>
+          <div class="raw" id="rawBox">(empty)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script src="https://cdn.jsdelivr.net/npm/jsqr/dist/jsQR.js"></script>
+<script>
+/*
+  QR Inspector
+  - Supports upload + camera
+  - Parses: URL, mailto, tel, sms, upi (upi://pay?), UPI as plain pa=..., vCard, MECARD, WIFI, GEO, plain text heuristics
+  - Shows labeled fields + copy buttons
+  - Uses willReadFrequently for canvas context
+*/
+
+(function(){
+  const video = document.getElementById('video');
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const startCamera = document.getElementById('startCamera');
+  const stopCamera = document.getElementById('stopCamera');
+  const fileInput = document.getElementById('fileInput');
+  const status = document.getElementById('status');
+  const results = document.getElementById('results');
+  const rawBox = document.getElementById('rawBox');
+  const summary = document.getElementById('summary');
+
+  let stream = null;
+  let scanning = false;
+  let rafId = null;
+
+  function updateStatus(msg, type='info'){
+    status.textContent = msg;
+    status.style.color = type === 'error' ? '#b02a37' : '#374151';
+  }
+
+  startCamera.addEventListener('click', async ()=>{
+    try {
+      updateStatus('Requesting camera...');
+      stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:'environment'}});
+      video.srcObject = stream;
+      scanning = true;
+      startCamera.disabled = true;
+      stopCamera.disabled = false;
+      updateStatus('Camera started. Point at QR.');
+      // wait for size
+      video.addEventListener('loadedmetadata', () => {
+        canvas.width = video.videoWidth || 800;
+        canvas.height = video.videoHeight || 600;
+      }, { once: true });
+      tick();
+    } catch (err) {
+      console.error(err);
+      updateStatus('Camera not available/permission denied. Use Upload.', 'error');
+    }
+  });
+
+  stopCamera.addEventListener('click', ()=>{
+    scanning = false;
+    startCamera.disabled = false;
+    stopCamera.disabled = true;
+    cancelAnimationFrame(rafId);
+    if (stream) {
+      stream.getTracks().forEach(t => t.stop());
+      stream = null;
+    }
+    video.srcObject = null;
+    updateStatus('Camera stopped');
+  });
+
+  function tick(){
+    if (!scanning) return;
+    if (video.readyState === video.HAVE_ENOUGH_DATA){
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const imgData = ctx.getImageData(0,0,canvas.width,canvas.height);
+      let code = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'dontInvert' });
+      if (!code) {
+        code = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'attemptBoth' });
+      }
+      if (code && code.data) {
+        handleScanned(code.data);
+        // keep scanning (in case they want multiple), but stop camera if you want one-shot:
+        // scanning = false;
+        // stopCamera.click();
+      }
+    }
+    rafId = requestAnimationFrame(tick);
+  }
+
+  // ---- Upload handling ----
+  fileInput.addEventListener('change', async (e)=>{
+    const f = e.target.files[0];
+    if (!f) return;
+    updateStatus('Loading image...');
+    // Basic validations
+    if (!f.type.startsWith('image/')) {
+      updateStatus('Please upload an image file.', 'error'); return;
+    }
+    if (f.size > 12 * 1024 * 1024) {
+      updateStatus('File too large (12MB max).', 'error'); return;
+    }
+    const img = new Image();
+    const url = URL.createObjectURL(f);
+    img.onload = () => {
+      // scale down if too large but keep reasonable resolution
+      const max = 2500;
+      let w = img.naturalWidth, h = img.naturalHeight;
+      if (w > max || h > max) {
+        const ratio = Math.min(max / w, max / h);
+        w = Math.round(w * ratio); h = Math.round(h * ratio);
+      }
+      canvas.width = w; canvas.height = h;
+      ctx.clearRect(0,0,w,h);
+      ctx.drawImage(img, 0,0,w,h);
+      URL.revokeObjectURL(url);
+      updateStatus('Scanning uploaded image...');
+      // attempt decode with multiple attempts
+      tryDecodeFromCanvas();
+    };
+    img.onerror = ()=>{
+      updateStatus('Invalid image file.', 'error');
+      URL.revokeObjectURL(url);
+    };
+    img.src = url;
+  });
+
+  function tryDecodeFromCanvas(){
+    try {
+      const imgData = ctx.getImageData(0,0,canvas.width,canvas.height);
+      // try without invert first
+      let code = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'dontInvert' });
+      if (!code) code = jsQR(imgData.data, imgData.width, imgData.height, { inversionAttempts: 'attemptBoth' });
+      if (!code || !code.data) {
+        // small preprocessing fallback: draw a brightness adjusted copy to help contrast
+        tryContrastEnhanceThenDecode();
+        return;
+      }
+      handleScanned(code.data);
+    } catch (err) {
+      console.error(err);
+      updateStatus('Error processing image.', 'error');
+    }
+  }
+
+  function tryContrastEnhanceThenDecode(){
+    // naive contrast/brightness tweak to help low-contrast QR images
+    try {
+      const w = canvas.width, h = canvas.height;
+      const tmp = document.createElement('canvas');
+      tmp.width = w; tmp.height = h;
+      const tctx = tmp.getContext('2d', { willReadFrequently: true });
+      tctx.filter = 'contrast(140%) brightness(100%)';
+      tctx.drawImage(canvas, 0,0,w,h);
+      const id = tctx.getImageData(0,0,w,h);
+      let code = jsQR(id.data, id.width, id.height, { inversionAttempts: 'attemptBoth' });
+      if (code && code.data) {
+        handleScanned(code.data);
+        return;
+      }
+      // last attempt: grayscale + threshold
+      const id2 = tctx.getImageData(0,0,w,h);
+      for (let i=0;i<id2.data.length;i+=4){
+        const r=id2.data[i], g=id2.data[i+1], b=id2.data[i+2];
+        const gray = (r+g+b)/3;
+        const v = gray>160?255:0;
+        id2.data[i]=id2.data[i+1]=id2.data[i+2]=v;
+      }
+      let code2 = jsQR(id2.data, id2.width, id2.height, { inversionAttempts: 'attemptBoth' });
+      if (code2 && code2.data) {
+        handleScanned(code2.data);
+        return;
+      }
+      updateStatus('No QR code detected in image.', 'error');
+    } catch (err) {
+      console.error(err);
+      updateStatus('Processing error.', 'error');
+    }
+  }
+
+  // ---- Parsing logic ----
+  function handleScanned(raw){
+    rawBox.textContent = raw;
+    summary.textContent = `Scanned at ${new Date().toLocaleString()}`;
+    updateStatus('QR detected', 'info');
+    const parsed = extractQRData(raw);
+    renderParsed(parsed);
+  }
+
+  function renderParsed(parsed){
+    results.innerHTML = ''; // wipe
+    // Show main type
+    const hdr = document.createElement('div');
+    hdr.className = 'field';
+    hdr.innerHTML = `<div class="label">Type</div><div class="value">${parsed.type} ${parsed.subtype? '• '+parsed.subtype : ''}</div>`;
+    results.appendChild(hdr);
+
+    // show structured fields
+    for (const [k,v] of Object.entries(parsed.details || {})){
+      const el = document.createElement('div');
+      el.className = 'field';
+      const label = document.createElement('div');
+      label.className = 'label';
+      label.textContent = k;
+      const val = document.createElement('div');
+      val.className = 'value';
+      val.textContent = v === null || v === undefined ? '' : String(v);
+      const copy = document.createElement('button');
+      copy.className = 'copy';
+      copy.textContent = 'Copy';
+      copy.onclick = () => {
+        navigator.clipboard.writeText(String(v||'')).then(()=>{ updateStatus(`${k} copied to clipboard`); });
+      };
+      el.appendChild(label);
+      el.appendChild(val);
+      el.appendChild(copy);
+      results.appendChild(el);
+    }
+
+    // If heuristics found phone or upi in plain text, show buttons for quick actions
+    if (parsed.guesses && parsed.guesses.length){
+      parsed.guesses.forEach(g=>{
+        const el = document.createElement('div');
+        el.className = 'field';
+        el.innerHTML = `<div class="label">${g.label}</div><div class="value">${g.value}</div>`;
+        const copy = document.createElement('button');
+        copy.className='copy';
+        copy.textContent='Copy';
+        copy.onclick = ()=> navigator.clipboard.writeText(g.value).then(()=>updateStatus(`${g.label} copied`));
+        el.appendChild(copy);
+        results.appendChild(el);
+      });
+    }
+  }
+
+  function extractQRData(data){
+    // normalize
+    const out = { type:'Unknown', subtype:null, details:{}, guesses:[] };
+
+    // Helpful small normalizer
+    const trim = s => s ? s.trim() : s;
+
+    // 1) URL-like
+    try {
+      if (/^https?:\/\//i.test(data)){
+        const url = new URL(data);
+        out.type = 'URL';
+        out.details['Full URL'] = data;
+        out.details['Domain'] = url.hostname;
+        out.details['Path'] = url.pathname || '/';
+        out.details['Query'] = url.search || 'None';
+        out.details['Protocol'] = url.protocol;
+        // heuristics: query params that look like upi or pa
+        if (url.searchParams.has('pa')) out.guesses.push({label:'UPI ID (from query param pa)', value: url.searchParams.get('pa')});
+        return out;
+      }
+    } catch(e){ /* ignore invalid URL */ }
+
+    // 2) mailto:
+    if (/^mailto:/i.test(data)){
+      out.type = 'Email';
+      const addr = data.replace(/^mailto:/i,'').split('?')[0];
+      out.details['Email Address'] = decodeURIComponent(addr);
+      return out;
+    }
+
+    // 3) tel:
+    if (/^tel:/i.test(data) || /^\+?[\d\-\s\(\)]{6,}$/i.test(data)){
+      // tel: explicit OR bare phone-like text
+      const phone = data.replace(/^tel:/i,'').trim();
+      // basic cleanup
+      const cleaned = phone.replace(/[^\d+]/g,'');
+      out.type = 'Phone';
+      out.details['Phone Number'] = cleaned;
+      // also add as guess
+      out.guesses.push({label:'Phone', value:cleaned});
+      return out;
+    }
+
+    // 4) SMS:
+    if (/^sms:/i.test(data)){
+      out.type = 'SMS';
+      // format: sms:+123456?body=hello
+      const txt = data.replace(/^sms:/i,'');
+      const [num,rest] = txt.split('?');
+      out.details['Phone Number'] = num || '';
+      const params = new URLSearchParams(rest || '');
+      out.details['Message'] = params.get('body') || '';
+      return out;
+    }
+
+    // 5) UPI common: upi://pay?pa=... or strings containing 'upi' pattern
+    if (/^upi:\/\//i.test(data) || /^upi:/i.test(data) || /(\bupi\b|\bpa=.+@)/i.test(data)){
+      out.type = 'UPI Payment';
+      // many UPI encodings: upi://pay?pa=xyz@bank&pn=Name&am=12
+      try {
+        // unify to a query-like string
+        let q = data;
+        if (q.startsWith('upi:')) q = q.replace(/^upi:/i,'upi://'); // ensure URL parse
+        if (q.startsWith('upi://') || q.startsWith('upi:')){
+          // attempt URL parsing
+          const fake = q.startsWith('upi://') ? q : 'upi://'+q.replace(/^upi:\/\//i,'');
+          const idx = fake.indexOf('?');
+          const qs = idx >=0 ? fake.slice(idx+1) : fake;
+          const params = new URLSearchParams(qs);
+          out.details['UPI ID'] = params.get('pa') || 'Not specified';
+          out.details['Payee Name'] = params.get('pn') || 'Not specified';
+          if (params.get('am')) out.details['Amount'] = params.get('am');
+          if (params.get('tn')) out.details['Note'] = params.get('tn');
+          if (params.get('tr')) out.details['Ref'] = params.get('tr');
+          if (out.details['UPI ID'] && out.details['UPI ID']!=='Not specified') out.guesses.push({label:'UPI ID', value: out.details['UPI ID']});
+          return out;
+        } else {
+          // fallback: try to extract pa=... or pattern someone encoded
+          const m = data.match(/pa=([^&\s]+)/i) || data.match(/([a-z0-9.\-_]+@[a-z0-9.\-_]+)/i);
+          out.details['Raw'] = data;
+          if (m) { out.details['UPI ID'] = m[1] || m[0]; out.guesses.push({label:'UPI ID', value: out.details['UPI ID']}); }
+          return out;
+        }
+      } catch(e){
+        out.details['Raw'] = data;
+        return out;
+      }
+    }
+
+    // 6) WiFi: WIFI:T:WPA;S:mynetwork;P:mypass;H:true;;
+    if (/^WIFI:/i.test(data)){
+      out.type = 'WiFi Configuration';
+      const m = data.match(/WIFI:T:([^;]*);S:([^;]*);P:([^;]*);H:([^;]*);?/i);
+      if (m){
+        out.details['Security'] = m[1] || 'OPEN';
+        out.details['SSID'] = m[2] || '';
+        out.details['Password'] = m[3] || '';
+        out.details['Hidden'] = (m[4]||'').toLowerCase() === 'true' ? 'Yes' : 'No';
+      } else {
+        // more permissive parse
+        const s = (data.match(/S:([^;]*)/) || [null,''])[1];
+        const p = (data.match(/P:([^;]*)/) || [null,''])[1];
+        out.details['SSID'] = s || '';
+        out.details['Password'] = p || '';
+      }
+      return out;
+    }
+
+    // 7) vCard (BEGIN:VCARD)
+    if (/BEGIN:VCARD/i.test(data)){
+      out.type = 'Contact (vCard)';
+      const lines = data.split(/\r?\n/);
+      lines.forEach(l=>{
+        if (/^FN:/i.test(l)) out.details['Full Name'] = trim(l.replace(/^FN:/i,''));
+        if (/^N:/i.test(l) && !out.details['Full Name']) out.details['Name'] = trim(l.replace(/^N:/i,''));
+        if (/^ORG:/i.test(l)) out.details['Organization'] = trim(l.replace(/^ORG:/i,''));
+        if (/TEL/i.test(l)) {
+          const t = l.replace(/^.*TEL[^:]*:/i,'').trim();
+          out.details['Phone'] = (out.details['Phone'] ? out.details['Phone'] + ', ' : '') + t;
+        }
+        if (/^EMAIL:/i.test(l)) out.details['Email'] = trim(l.replace(/^EMAIL:/i,''));
+        if (/^URL:/i.test(l)) out.details['Website'] = trim(l.replace(/^URL:/i,''));
+      });
+      return out;
+    }
+
+    // 8) MECARD: (format: MECARD:N:Name;TEL:123;EMAIL:x@x;)
+    if (/^MECARD:/i.test(data)){
+      out.type = 'Contact (MECARD)';
+      const body = data.replace(/^MECARD:/i,'');
+      const parts = body.split(';').filter(Boolean);
+      parts.forEach(p=>{
+        const [k,v] = p.split(':');
+        if (!k) return;
+        const key = k.toUpperCase();
+        if (key === 'N') out.details['Name'] = v;
+        if (key === 'TEL') out.details['Phone'] = (out.details['Phone'] ? out.details['Phone']+', ' : '') + v;
+        if (key === 'EMAIL') out.details['Email'] = v;
+        if (key === 'ADR') out.details['Address'] = v;
+      });
+      return out;
+    }
+
+    // 9) GEO: geo:lat,long?z=...
+    if (/^geo:/i.test(data)){
+      out.type = 'Geo Location';
+      try {
+        const geo = data.replace(/^geo:/i,'');
+        const [coords, q] = geo.split('?');
+        out.details['Coordinates'] = coords;
+        if (q) out.details['Query'] = q;
+      } catch(e){}
+      return out;
+    }
+
+    // 10) BTC, crypto payment URIs (simple)
+    if (/^(bitcoin:|ethereum:|dogecoin:)/i.test(data)){
+      out.type = 'Crypto URI';
+      out.details['URI'] = data;
+      return out;
+    }
+
+    // 11) EMV / merchant payment QR (financial apps) - basic detect if numeric EMV payload starts with 000201
+    if (/^000201/.test(data)){
+      out.type = 'EMV Payment (raw)';
+      out.details['Raw EMV'] = data.slice(0,300) + (data.length>300 ? '...':'');
+      return out;
+    }
+
+    // 12) Fallback: plain text. Try to heuristically extract phone / upi / email
+    out.type = 'Plain Text';
+    out.details['Content'] = data;
+    // heuristics:
+    const emails = (data.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig) || []);
+    if (emails.length) out.details['Emails'] = emails.join(', ');
+
+    const phones = (data.match(/(\+?\d[\d\-\s\(\)]{5,}\d)/g) || []).map(s=>s.replace(/[^\d+]/g,''));
+    if (phones.length) { out.details['Phones'] = phones.join(', '); out.guesses.push({label:'Phone', value:phones[0]}); }
+
+    const upiMatch = data.match(/([a-z0-9.\-_]{2,}@[a-z0-9]+)/i);
+    if (upiMatch){ out.details['UPI candidate'] = upiMatch[1]; out.guesses.push({label:'UPI ID', value:upiMatch[1]}); }
+
+    // attempt to detect URL without protocol
+    const urlmatch = data.match(/(www\.[^\s]+)/i);
+    if (urlmatch) out.details['Possible URL'] = urlmatch[1];
+
+    return out;
+  }
+
+  // ---- helper: copy raw ----
+  rawBox.addEventListener('click', ()=> {
+    navigator.clipboard.writeText(rawBox.textContent || '').then(()=> updateStatus('Raw data copied'));
+  });
+
+  // initial small message
+  updateStatus('Ready — upload an image or start camera');
+
+  // Accessibility: allow paste of image from clipboard (optional)
+  window.addEventListener('paste', (ev)=>{
+    const items = (ev.clipboardData || ev.originalEvent.clipboardData).items;
+    for (const item of items){
+      if (item.type.indexOf('image') !== -1){
+        const blob = item.getAsFile();
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => {
+            const max = 2500;
+            let w = img.naturalWidth, h = img.naturalHeight;
+            if (w>max || h>max) {
+              const r = Math.min(max/w, max/h); w=Math.round(w*r); h=Math.round(h*r);
+            }
+            canvas.width = w; canvas.height = h;
+            ctx.drawImage(img,0,0,w,h);
+            tryDecodeFromCanvas();
+            URL.revokeObjectURL(url);
+          };
+          img.src = url;
+        }
+      }
+    }
+  });
+
+})();
+</script>
+</body>
+</html>

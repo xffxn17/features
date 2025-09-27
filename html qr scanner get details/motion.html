@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, user-scalable=no"
+    />
+    <title>Mobile AI Vision - Camera & Gesture Detection</title>
+    <style>
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      body {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          sans-serif;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        min-height: 100vh;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 10px;
+        overflow-x: hidden;
+      }
+
+      .container {
+        background: rgba(255, 255, 255, 0.95);
+        border-radius: 20px;
+        padding: 15px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        width: 100%;
+        max-width: 400px;
+      }
+
+      h1 {
+        text-align: center;
+        color: #333;
+        margin-bottom: 15px;
+        font-size: 20px;
+        font-weight: bold;
+      }
+
+      .camera-container {
+        position: relative;
+        border-radius: 15px;
+        overflow: hidden;
+        margin-bottom: 15px;
+        background: #000;
+        min-height: 300px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #camera {
+        width: 100%;
+        height: auto;
+        display: block;
+        transform: scaleX(-1);
+      }
+
+      .camera-placeholder {
+        color: white;
+        text-align: center;
+        padding: 40px 20px;
+        font-size: 16px;
+      }
+
+      .controls {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 15px;
+      }
+
+      .big-button {
+        padding: 15px;
+        border: none;
+        border-radius: 15px;
+        font-size: 16px;
+        font-weight: bold;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        text-align: center;
+        color: white;
+      }
+
+      .start-btn {
+        background: linear-gradient(135deg, #4caf50, #45a049);
+        grid-column: 1 / -1;
+      }
+
+      .switch-btn {
+        background: linear-gradient(135deg, #2196f3, #1976d2);
+      }
+
+      .stop-btn {
+        background: linear-gradient(135deg, #f44336, #da190b);
+      }
+
+      .big-button:active {
+        transform: scale(0.95);
+      }
+
+      .big-button:disabled {
+        background: #ccc !important;
+        cursor: not-allowed;
+        transform: none;
+      }
+
+      .detection-results {
+        background: #f8f9fa;
+        border-radius: 15px;
+        padding: 15px;
+        margin-bottom: 15px;
+      }
+
+      .result-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px;
+        background: white;
+        border-radius: 10px;
+        margin-bottom: 8px;
+        box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+      }
+
+      .result-item:last-child {
+        margin-bottom: 0;
+      }
+
+      .result-emoji {
+        font-size: 24px;
+        margin-right: 10px;
+      }
+
+      .result-text {
+        flex: 1;
+        font-weight: bold;
+        color: #333;
+      }
+
+      .result-confidence {
+        background: #007bff;
+        color: white;
+        padding: 4px 8px;
+        border-radius: 15px;
+        font-size: 12px;
+        font-weight: bold;
+      }
+
+      .status-bar {
+        background: linear-gradient(135deg, #17a2b8, #138496);
+        color: white;
+        padding: 12px;
+        border-radius: 10px;
+        text-align: center;
+        margin-bottom: 15px;
+        font-weight: bold;
+      }
+
+      .troubleshoot {
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 15px;
+      }
+
+      .troubleshoot h3 {
+        color: #856404;
+        margin-bottom: 10px;
+        font-size: 16px;
+      }
+
+      .troubleshoot ul {
+        color: #856404;
+        font-size: 14px;
+        padding-left: 20px;
+      }
+
+      .troubleshoot li {
+        margin-bottom: 5px;
+      }
+
+      .permissions-check {
+        background: #d1ecf1;
+        border: 1px solid #bee5eb;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 15px;
+      }
+
+      .permissions-check button {
+        background: #17a2b8;
+        color: white;
+        border: none;
+        padding: 10px 15px;
+        border-radius: 8px;
+        cursor: pointer;
+        font-weight: bold;
+        width: 100%;
+        margin-top: 10px;
+      }
+
+      .browser-info {
+        background: #e2e3e5;
+        border-radius: 10px;
+        padding: 10px;
+        font-size: 12px;
+        text-align: center;
+        color: #6c757d;
+      }
+
+      @media (max-width: 400px) {
+        .container {
+          margin: 5px;
+          padding: 10px;
+        }
+
+        .controls {
+          grid-template-columns: 1fr;
+        }
+
+        .switch-btn,
+        .stop-btn {
+          grid-column: 1;
+        }
+      }
+
+      /* Animation for detected items */
+      .detected {
+        animation: pulse 1s infinite;
+      }
+
+      @keyframes pulse {
+        0% {
+          transform: scale(1);
+        }
+        50% {
+          transform: scale(1.05);
+        }
+        100% {
+          transform: scale(1);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>📱 Mobile AI Vision</h1>
+
+      <div class="status-bar" id="statusBar">
+        Ready to start - Tap "Start Camera" below
+      </div>
+
+      <div class="camera-container" id="cameraContainer">
+        <div class="camera-placeholder" id="placeholder">
+          📷 Camera will appear here<br />
+          <small>Make sure to allow camera permissions</small>
+        </div>
+        <video
+          id="camera"
+          autoplay
+          playsinline
+          muted
+          style="display: none"
+        ></video>
+      </div>
+
+      <div class="controls">
+        <button class="big-button start-btn" id="startBtn">
+          📹 Start Camera
+        </button>
+        <button class="big-button switch-btn" id="switchBtn" disabled>
+          🔄 Switch Camera
+        </button>
+        <button class="big-button stop-btn" id="stopBtn" disabled>
+          ⏹️ Stop Camera
+        </button>
+      </div>
+
+      <div class="detection-results">
+        <div class="result-item">
+          <span class="result-emoji">😊</span>
+          <span class="result-text" id="emotionResult"
+            >No Emotion Detected</span
+          >
+          <span class="result-confidence" id="emotionConf">0%</span>
+        </div>
+        <div class="result-item">
+          <span class="result-emoji">👋</span>
+          <span class="result-text" id="gestureResult"
+            >No Gesture Detected</span
+          >
+          <span class="result-confidence" id="gestureConf">0%</span>
+        </div>
+        <div class="result-item">
+          <span class="result-emoji">🏃</span>
+          <span class="result-text" id="motionResult">No Motion Detected</span>
+          <span class="result-confidence" id="motionConf">0%</span>
+        </div>
+      </div>
+
+      <div class="permissions-check">
+        <strong>🔐 Camera Not Working?</strong>
+        <p style="margin: 8px 0; font-size: 14px">
+          Check camera permissions and try these steps:
+        </p>
+        <button onclick="checkPermissions()">
+          🔍 Check Camera Permissions
+        </button>
+      </div>
+
+      <div class="troubleshoot">
+        <h3>🛠️ Troubleshooting Steps:</h3>
+        <ul>
+          <li>
+            <strong>Allow Permissions:</strong> When prompted, tap "Allow" for
+            camera access
+          </li>
+          <li>
+            <strong>Use HTTPS:</strong> Camera only works on secure connections
+          </li>
+          <li>
+            <strong>Try Different Browser:</strong> Chrome, Safari, or Firefox
+            work best
+          </li>
+          <li>
+            <strong>Check Settings:</strong> Go to phone Settings > Apps >
+            Browser > Permissions
+          </li>
+          <li>
+            <strong>Restart Browser:</strong> Close and reopen your browser app
+          </li>
+          <li><strong>Clear Cache:</strong> Clear browser cache and cookies</li>
+        </ul>
+      </div>
+
+      <div class="browser-info" id="browserInfo">
+        Loading browser information...
+      </div>
+    </div>
+
+    <script>
+      class MobileVisionApp {
+        constructor() {
+          this.camera = document.getElementById("camera");
+          this.canvas = document.createElement("canvas");
+          this.ctx = this.canvas.getContext("2d");
+          this.isRunning = false;
+          this.currentFacingMode = "user"; // 'user' = front, 'environment' = back
+          this.stream = null;
+          this.detectionInterval = null;
+          this.prevImageData = null;
+
+          this.initElements();
+          this.setupEventListeners();
+          this.displayBrowserInfo();
+          this.logStatus("App initialized - Ready to start");
+        }
+
+        initElements() {
+          this.startBtn = document.getElementById("startBtn");
+          this.switchBtn = document.getElementById("switchBtn");
+          this.stopBtn = document.getElementById("stopBtn");
+          this.statusBar = document.getElementById("statusBar");
+          this.placeholder = document.getElementById("placeholder");
+          this.cameraContainer = document.getElementById("cameraContainer");
+
+          // Detection result elements
+          this.emotionResult = document.getElementById("emotionResult");
+          this.emotionConf = document.getElementById("emotionConf");
+          this.gestureResult = document.getElementById("gestureResult");
+          this.gestureConf = document.getElementById("gestureConf");
+          this.motionResult = document.getElementById("motionResult");
+          this.motionConf = document.getElementById("motionConf");
+        }
+
+        setupEventListeners() {
+          this.startBtn.addEventListener("click", () => this.startCamera());
+          this.switchBtn.addEventListener("click", () => this.switchCamera());
+          this.stopBtn.addEventListener("click", () => this.stopCamera());
+
+          // Handle page visibility changes
+          document.addEventListener("visibilitychange", () => {
+            if (document.hidden && this.isRunning) {
+              this.pauseDetection();
+            } else if (!document.hidden && this.isRunning) {
+              this.resumeDetection();
+            }
+          });
+        }
+
+        displayBrowserInfo() {
+          const info = document.getElementById("browserInfo");
+          const ua = navigator.userAgent;
+          let browserName = "Unknown Browser";
+
+          if (ua.includes("Chrome") && !ua.includes("Edg"))
+            browserName = "Chrome";
+          else if (ua.includes("Safari") && !ua.includes("Chrome"))
+            browserName = "Safari";
+          else if (ua.includes("Firefox")) browserName = "Firefox";
+          else if (ua.includes("Edg")) browserName = "Edge";
+
+          const hasCamera = !!(
+            navigator.mediaDevices && navigator.mediaDevices.getUserMedia
+          );
+          const isSecure =
+            location.protocol === "https:" || location.hostname === "localhost";
+
+          info.innerHTML = `
+                    Browser: ${browserName} |
+                    Camera API: ${hasCamera ? "✅" : "❌"} |
+                    Secure: ${isSecure ? "✅" : "❌"}
+                `;
+        }
+
+        async startCamera() {
+          this.logStatus("Starting camera...");
+
+          try {
+            // Stop any existing stream
+            if (this.stream) {
+              this.stream.getTracks().forEach((track) => track.stop());
+            }
+
+            // Request camera access
+            const constraints = {
+              video: {
+                facingMode: this.currentFacingMode,
+                width: { ideal: 640, max: 1280 },
+                height: { ideal: 480, max: 720 },
+              },
+              audio: false,
+            };
+
+            this.stream = await navigator.mediaDevices.getUserMedia(
+              constraints
+            );
+
+            // Setup video element
+            this.camera.srcObject = this.stream;
+            this.camera.style.display = "block";
+            this.placeholder.style.display = "none";
+
+            // Wait for video to load
+            await new Promise((resolve) => {
+              this.camera.onloadedmetadata = () => {
+                this.camera.play();
+                resolve();
+              };
+            });
+
+            // Setup canvas for processing
+            this.canvas.width = this.camera.videoWidth;
+            this.canvas.height = this.camera.videoHeight;
+
+            // Update UI
+            this.isRunning = true;
+            this.startBtn.disabled = true;
+            this.switchBtn.disabled = false;
+            this.stopBtn.disabled = false;
+
+            this.logStatus(
+              `Camera active (${
+                this.currentFacingMode === "user" ? "Front" : "Back"
+              })`
+            );
+
+            // Start detection
+            this.startDetection();
+          } catch (error) {
+            console.error("Camera error:", error);
+            this.handleCameraError(error);
+          }
+        }
+
+        async switchCamera() {
+          if (!this.isRunning) return;
+
+          // Toggle camera
+          this.currentFacingMode =
+            this.currentFacingMode === "user" ? "environment" : "user";
+
+          // Update transform for front camera mirror effect
+          this.camera.style.transform =
+            this.currentFacingMode === "user" ? "scaleX(-1)" : "scaleX(1)";
+
+          // Restart camera with new facing mode
+          await this.startCamera();
+        }
+
+        stopCamera() {
+          if (this.stream) {
+            this.stream.getTracks().forEach((track) => track.stop());
+            this.stream = null;
+          }
+
+          if (this.detectionInterval) {
+            clearInterval(this.detectionInterval);
+            this.detectionInterval = null;
+          }
+
+          this.camera.style.display = "none";
+          this.placeholder.style.display = "block";
+
+          this.isRunning = false;
+          this.startBtn.disabled = false;
+          this.switchBtn.disabled = true;
+          this.stopBtn.disabled = true;
+
+          this.resetDetectionResults();
+          this.logStatus("Camera stopped");
+        }
+
+        startDetection() {
+          this.detectionInterval = setInterval(() => {
+            this.processFrame();
+          }, 500); // Process every 500ms for mobile performance
+        }
+
+        pauseDetection() {
+          if (this.detectionInterval) {
+            clearInterval(this.detectionInterval);
+            this.detectionInterval = null;
+          }
+        }
+
+        resumeDetection() {
+          if (this.isRunning && !this.detectionInterval) {
+            this.startDetection();
+          }
+        }
+
+        processFrame() {
+          if (!this.camera || this.camera.readyState !== 4) return;
+
+          try {
+            // Draw current frame to canvas
+            this.ctx.drawImage(
+              this.camera,
+              0,
+              0,
+              this.canvas.width,
+              this.canvas.height
+            );
+            const imageData = this.ctx.getImageData(
+              0,
+              0,
+              this.canvas.width,
+              this.canvas.height
+            );
+
+            // Detect motion
+            this.detectMotion(imageData);
+
+            // Detect gestures
+            this.detectGestures(imageData);
+
+            // Detect emotions
+            this.detectEmotions(imageData);
+
+            this.prevImageData = imageData;
+          } catch (error) {
+            console.error("Processing error:", error);
+          }
+        }
+
+        detectMotion(imageData) {
+          if (!this.prevImageData) return;
+
+          const motion = this.calculateMotion(imageData, this.prevImageData);
+          let motionType = "Still";
+          let confidence = 0;
+
+          if (motion > 100) {
+            motionType = "Fast Movement";
+            confidence = Math.min(95, 60 + motion * 0.1);
+          } else if (motion > 50) {
+            motionType = "Active Motion";
+            confidence = Math.min(85, 50 + motion * 0.3);
+          } else if (motion > 20) {
+            motionType = "Slow Movement";
+            confidence = Math.min(75, 40 + motion * 0.8);
+          } else if (motion > 5) {
+            motionType = "Slight Motion";
+            confidence = Math.min(60, 30 + motion * 2);
+          }
+
+          this.updateResult("motion", motionType, confidence);
+        }
+
+        detectGestures(imageData) {
+          const gesture = this.analyzeGestures(imageData);
+          if (gesture.detected) {
+            this.updateResult("gesture", gesture.type, gesture.confidence);
+          } else {
+            this.updateResult("gesture", "No Gesture", 0);
+          }
+        }
+
+        detectEmotions(imageData) {
+          const emotion = this.analyzeEmotions(imageData);
+          if (emotion.detected) {
+            this.updateResult("emotion", emotion.type, emotion.confidence);
+          } else {
+            this.updateResult("emotion", "No Face", 0);
+          }
+        }
+
+        calculateMotion(current, previous) {
+          const currentData = current.data;
+          const previousData = previous.data;
+          let totalDiff = 0;
+          let samples = 0;
+
+          // Sample every 16th pixel for performance
+          for (let i = 0; i < currentData.length; i += 64) {
+            const currentGray =
+              (currentData[i] + currentData[i + 1] + currentData[i + 2]) / 3;
+            const previousGray =
+              (previousData[i] + previousData[i + 1] + previousData[i + 2]) / 3;
+            totalDiff += Math.abs(currentGray - previousGray);
+            samples++;
+          }
+
+          return samples > 0 ? totalDiff / samples : 0;
+        }
+
+        analyzeGestures(imageData) {
+          const skinRegions = this.detectSkinRegions(imageData);
+
+          if (skinRegions.length === 0) {
+            return { detected: false };
+          }
+
+          // Get largest skin region (likely hand)
+          const mainRegion = skinRegions.reduce((prev, curr) =>
+            curr.size > prev.size ? curr : prev
+          );
+
+          if (mainRegion.size < 500) {
+            return { detected: false };
+          }
+
+          // Simple gesture classification based on region shape
+          const aspectRatio = mainRegion.width / mainRegion.height;
+          let gestureType = "✋ Open Hand";
+          let confidence = 60;
+
+          if (aspectRatio > 1.8) {
+            gestureType = "👋 Hello/Wave";
+            confidence = 75;
+          } else if (aspectRatio < 0.6) {
+            gestureType = "👍 Thumbs Up";
+            confidence = 70;
+          } else if (mainRegion.density > 0.8) {
+            gestureType = "✊ Fist";
+            confidence = 80;
+          } else if (mainRegion.density < 0.4) {
+            gestureType = "✌️ Peace Sign";
+            confidence = 65;
+          }
+
+          return { detected: true, type: gestureType, confidence };
+        }
+
+        analyzeEmotions(imageData) {
+          // Simple face detection based on skin color distribution
+          const faceRegion = this.detectFaceArea(imageData);
+
+          if (!faceRegion) {
+            return { detected: false };
+          }
+
+          // Analyze brightness patterns for basic emotion detection
+          const brightness = this.analyzeBrightness(imageData, faceRegion);
+          const contrast = this.analyzeContrast(imageData, faceRegion);
+
+          let emotionType = "😊 Happy";
+          let confidence = 55;
+
+          if (brightness > 140 && contrast > 50) {
+            emotionType = "😄 Very Happy";
+            confidence = 75;
+          } else if (brightness < 100 && contrast < 30) {
+            emotionType = "😢 Sad";
+            confidence = 70;
+          } else if (contrast > 80) {
+            emotionType = "😮 Surprised";
+            confidence = 65;
+          } else if (brightness < 110 && contrast > 40) {
+            emotionType = "😠 Angry";
+            confidence = 68;
+          } else {
+            emotionType = "😐 Neutral";
+            confidence = 60;
+          }
+
+          return { detected: true, type: emotionType, confidence };
+        }
+
+        detectSkinRegions(imageData) {
+          const data = imageData.data;
+          const width = imageData.width;
+          const height = imageData.height;
+          const regions = [];
+
+          // Simple skin detection
+          for (let y = 0; y < height; y += 10) {
+            for (let x = 0; x < width; x += 10) {
+              const i = (y * width + x) * 4;
+              const r = data[i];
+              const g = data[i + 1];
+              const b = data[i + 2];
+
+              if (this.isSkinPixel(r, g, b)) {
+                regions.push({
+                  x,
+                  y,
+                  size: this.calculateRegionSize(data, width, height, x, y),
+                  width: 20,
+                  height: 20,
+                  density: 0.7,
+                });
+              }
+            }
+          }
+
+          return regions.filter((r) => r.size > 300);
+        }
+
+        detectFaceArea(imageData) {
+          const skinRegions = this.detectSkinRegions(imageData);
+
+          // Look for face-like regions (roughly oval, center-upper area)
+          const centerX = imageData.width / 2;
+          const upperY = imageData.height / 3;
+
+          for (const region of skinRegions) {
+            const distance = Math.sqrt(
+              Math.pow(region.x - centerX, 2) + Math.pow(region.y - upperY, 2)
+            );
+
+            if (distance < imageData.width / 3 && region.size > 800) {
+              return region;
+            }
+          }
+
+          return null;
+        }
+
+        isSkinPixel(r, g, b) {
+          return (
+            r > 95 && g > 40 && b > 20 && r > g && r > b && Math.abs(r - g) > 15
+          );
+        }
+
+        calculateRegionSize(data, width, height, startX, startY) {
+          // Simple region size estimation
+          let size = 0;
+          for (let dy = -5; dy <= 5; dy++) {
+            for (let dx = -5; dx <= 5; dx++) {
+              const x = startX + dx;
+              const y = startY + dy;
+              if (x >= 0 && x < width && y >= 0 && y < height) {
+                const i = (y * width + x) * 4;
+                if (this.isSkinPixel(data[i], data[i + 1], data[i + 2])) {
+                  size++;
+                }
+              }
+            }
+          }
+          return size * 10; // Scale up estimate
+        }
+
+        analyzeBrightness(imageData, region) {
+          const data = imageData.data;
+          const width = imageData.width;
+          let totalBrightness = 0;
+          let samples = 0;
+
+          for (let y = region.y - 20; y < region.y + 20; y += 2) {
+            for (let x = region.x - 20; x < region.x + 20; x += 2) {
+              if (x >= 0 && x < width && y >= 0 && y < imageData.height) {
+                const i = (y * width + x) * 4;
+                const brightness = (data[i] + data[i + 1] + data[i + 2]) / 3;
+                totalBrightness += brightness;
+                samples++;
+              }
+            }
+          }
+
+          return samples > 0 ? totalBrightness / samples : 128;
+        }
+
+        analyzeContrast(imageData, region) {
+          const data = imageData.data;
+          const width = imageData.width;
+          const values = [];
+
+          for (let y = region.y - 15; y < region.y + 15; y += 3) {
+            for (let x = region.x - 15; x < region.x + 15; x += 3) {
+              if (x >= 0 && x < width && y >= 0 && y < imageData.height) {
+                const i = (y * width + x) * 4;
+                const brightness = (data[i] + data[i + 1] + data[i + 2]) / 3;
+                values.push(brightness);
+              }
+            }
+          }
+
+          if (values.length === 0) return 0;
+
+          const avg = values.reduce((a, b) => a + b, 0) / values.length;
+          const variance =
+            values.reduce((sum, val) => sum + Math.pow(val - avg, 2), 0) /
+            values.length;
+          return Math.sqrt(variance);
+        }
+
+        updateResult(type, text, confidence) {
+          const resultElement = document.getElementById(type + "Result");
+          const confElement = document.getElementById(type + "Conf");
+
+          if (resultElement && confElement) {
+            resultElement.textContent = text;
+            confElement.textContent = Math.round(confidence) + "%";
+
+            // Add pulse animation for high confidence detections
+            const resultItem = resultElement.closest(".result-item");
+            if (confidence > 60) {
+              resultItem.classList.add("detected");
+              setTimeout(() => resultItem.classList.remove("detected"), 1000);
+            }
+          }
+        }
+
+        resetDetectionResults() {
+          this.updateResult("emotion", "No Emotion Detected", 0);
+          this.updateResult("gesture", "No Gesture Detected", 0);
+          this.updateResult("motion", "No Motion Detected", 0);
+        }
+
+        handleCameraError(error) {
+          let errorMessage = "Camera access failed";
+
+          if (error.name === "NotAllowedError") {
+            errorMessage =
+              "Camera permission denied - Please allow camera access";
+          } else if (error.name === "NotFoundError") {
+            errorMessage = "No camera found on device";
+          } else if (error.name === "NotSupportedError") {
+            errorMessage = "Camera not supported by browser";
+          } else if (error.name === "NotReadableError") {
+            errorMessage = "Camera is being used by another app";
+          }
+
+          this.logStatus(errorMessage);
+          alert(
+            errorMessage + "\n\nPlease check the troubleshooting steps below."
+          );
+        }
+
+        logStatus(message) {
+          this.statusBar.textContent = message;
+          console.log("MobileVision:", message);
+        }
+      }
+
+      // Global function for permission check
+      async function checkPermissions() {
+        try {
+          const result = await navigator.permissions.query({ name: "camera" });
+          alert(
+            `Camera Permission: ${result.state}\n\nIf denied, go to your browser settings and enable camera access for this site.`
+          );
+        } catch (error) {
+          alert(
+            "Unable to check permissions. Please manually allow camera access when prompted."
+          );
+        }
+      }
+
+      // Initialize app when page loads
+      document.addEventListener("DOMContentLoaded", () => {
+        window.visionApp = new MobileVisionApp();
+      });
+
+      // Handle page unload
+      window.addEventListener("beforeunload", () => {
+        if (window.visionApp && window.visionApp.isRunning) {
+          window.visionApp.stopCamera();
+        }
+      });
+    </script>
+  </body>
+</html>
